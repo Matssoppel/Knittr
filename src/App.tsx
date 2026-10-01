@@ -7,6 +7,7 @@ import selectIcon from './assets/icons/select.svg';
 import fillSelectionIcon from './assets/icons/fill-selection.svg';
 import deselectIcon from './assets/icons/deselect.svg';
 import undoIcon from './assets/icons/undo.svg';
+import clearIcon from './assets/icons/clear.svg';
 import knitIcon from './assets/icons/knit.svg';
 import purlIcon from './assets/icons/purl.svg';
 import emptyIcon from './assets/icons/empty.svg';
@@ -93,6 +94,7 @@ export default function App() {
     setSelection,
     fillSelection,
     undo,
+    clearAll,
     past,
     view,
     setView,
@@ -452,6 +454,14 @@ export default function App() {
             aria-label="Undo"
           >
             <Icon src={undoIcon} />
+          </button>
+          <button
+            className="icon-button"
+            onClick={clearAll}
+            title={mode === 'garment' ? 'Clear garment' : 'Clear swatch'}
+            aria-label={mode === 'garment' ? 'Clear garment' : 'Clear swatch'}
+          >
+            <Icon src={clearIcon} />
           </button>
           {selection && tool === 'select' && (
             <>

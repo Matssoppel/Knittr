@@ -173,6 +173,9 @@ interface PatternState extends PatternDoc {
   fillAreaWithSwatch: () => void;
   // Increase/decrease at a garment stitch: blank every row below/above it.
   shapeColumn: (row: number, col: number) => void;
+  // Reset the showing grid to plain knit in the main yarn: the active swatch,
+  // or the whole garment (swatch areas, stitch edits and shaping).
+  clearAll: () => void;
 
   undo: () => void;
   beginStroke: () => void;
@@ -462,6 +465,18 @@ export const usePatternStore = create<PatternState>((set) => ({
       const next = state.tool === 'increase' ? { ...current, bottom: rb } : { ...current, top: rb };
       if (next.bottom === current.bottom && next.top === current.top) return {};
       return { layout: { ...state.layout, shaping: { ...state.layout.shaping, [cr]: next } } };
+    }),
+
+  clearAll: () =>
+    set((state) => {
+      if (state.mode === 'garment') {
+        return { ...record(state), layout: EMPTY_LAYOUT, selection: null };
+      }
+      return {
+        ...record(state),
+        selection: null,
+        swatches: updateActiveSwatch(state, (s) => ({ ...s, cells: makeGrid(s.rows, s.cols, state.palette[0]) })),
+      };
     }),
 
   undo: () =>
