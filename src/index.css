@@ -55,6 +55,15 @@ body {
   z-index: 1;
 }
 
+/* Logo from Figma (188 × 48, the sidebar's inner width). Shown as an image,
+   not a mask like the icons, so it keeps its own colors. */
+.logo {
+  display: block;
+  width: 120px;
+  height: auto;
+  margin-bottom: 4px;
+}
+
 .sidebar-title {
   margin: 0;
   font-size: 16px;
@@ -244,6 +253,62 @@ body {
   background: var(--paper);
 }
 
+/* Tools with extra variants: a small corner notch hints at the right-click
+   menu. */
+.tool-menu-anchor {
+  position: relative;
+}
+
+.toolbar .has-menu::before {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border-left: 5px solid transparent;
+  border-bottom: 5px solid currentColor;
+  opacity: 0.6;
+}
+
+.tool-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-width: 200px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(31, 35, 38, 0.15);
+}
+
+.toolbar .tool-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  text-align: left;
+  background: transparent;
+}
+
+.toolbar .tool-menu button::after {
+  display: none;
+}
+
+.toolbar .tool-menu button:hover,
+.toolbar .tool-menu button.active {
+  background: #fff;
+}
+
+.sidebar .mode-toggle button {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 14px;
+}
+
 .view-toggle {
   margin-left: auto;
 }
@@ -254,6 +319,84 @@ body {
 }
 
 .stage-wrapper h3 {
+  margin: 0 0 0.5rem;
   font-size: 18px;
   font-weight: 700;
+}
+
+.canvas-row {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.canvas-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.zoom {
+  display: flex;
+  gap: 4px;
+}
+
+.zoom button {
+  min-width: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper);
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.zoom button:hover {
+  background: #fff;
+}
+
+/* Swatch library: thumbnails with names, two per row. */
+.swatch-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.sidebar .swatch-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+}
+
+.swatch-thumb {
+  display: block;
+  border-radius: 3px;
+}
+
+.swatch-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.sidebar .swatch-item.add-swatch {
+  justify-content: center;
+  min-height: 72px;
+  font-size: 20px;
+}
+
+.sidebar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--paper);
+}
+
+.sidebar button.danger {
+  font-size: 12px;
 }
