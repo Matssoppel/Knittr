@@ -7,6 +7,7 @@
   --page: #f4f2ef;
   --sidebar: #e07a5f;
   --radius: 6px;
+  --sidebar-width: 220px;
 
   font-family: 'Intel One Mono', ui-monospace, monospace;
   color: var(--ink);
@@ -17,14 +18,21 @@ body {
   background: var(--page);
 }
 
+/* The app fills the window and never scrolls as a whole: the sidebar and
+   the canvas each scroll inside their own area, so the toolbar, headings and
+   zoom controls stay put however far you zoom or scroll the garment. */
 .app {
+  position: relative;
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .sidebar {
-  flex: 0 0 220px;
+  flex: 0 0 var(--sidebar-width);
   box-sizing: border-box;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -33,15 +41,16 @@ body {
   position: relative;
 }
 
-/* Hand-drawn edge on the right, matching the inputs' wobbly outline. The
-   strip is wider than the 1px line so the wobble filter has room to move it
-   without clipping. */
-.sidebar::after {
+/* Hand-drawn edge along the sidebar's right side, matching the inputs'
+   wobbly outline. It's drawn on the app frame rather than the sidebar, which
+   scrolls and would clip it. The strip is wider than the 1px line so the
+   wobble filter has room to move it without clipping. */
+.app::after {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -8px;
+  left: calc(var(--sidebar-width) - 8px);
   width: 16px;
   background: linear-gradient(
     to right,
@@ -217,8 +226,24 @@ body {
 
 .stage-wrapper {
   flex: 1;
+  min-width: 0; /* let wide canvases scroll inside instead of widening the page */
+  display: flex;
+  flex-direction: column;
+  padding: 16px 16px 0;
+}
+
+.canvas-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-scroll {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding-bottom: 16px;
 }
 
 .toolbar {
@@ -328,6 +353,69 @@ body {
   display: flex;
   gap: 2rem;
   flex-wrap: wrap;
+}
+
+/* Swatch editor with − / + buttons on each edge (row at top/bottom, column
+   at left/right). */
+.edge-resizer {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-areas:
+    '. top .'
+    'left content right'
+    '. bottom .';
+  gap: 6px;
+  justify-content: start;
+  align-items: center;
+  justify-items: center;
+}
+
+.edge-content {
+  grid-area: content;
+}
+
+.edge-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.edge-top {
+  grid-area: top;
+}
+
+.edge-bottom {
+  grid-area: bottom;
+}
+
+.edge-left,
+.edge-right {
+  flex-direction: column;
+}
+
+.edge-left {
+  grid-area: left;
+}
+
+.edge-right {
+  grid-area: right;
+}
+
+.edge-controls button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  cursor: pointer;
+}
+
+.edge-controls button:hover {
+  background: #fff;
 }
 
 .canvas-heading {

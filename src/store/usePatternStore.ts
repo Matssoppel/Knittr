@@ -17,9 +17,22 @@ export const DEFAULT_YARN = '#d9d9d9';
 export const PALETTE_SIZE = 6;
 export const DEFAULT_PALETTE = [DEFAULT_YARN, '#f2f2f2', '#bfa288', '#8c4a4a', '#594040', '#1f2326'];
 
+// A cable crosses the stitches of one row: the half on the arrow's tail side
+// travels in front to the arrow's head side, and the other half passes behind.
+// Each stitch of the cable carries this marker; a cable is only drawn when all
+// of its stitches still carry matching markers.
+export type CableDir = 'left' | 'right';
+
+export interface CablePart {
+  span: number; // stitches in the whole cable, always even
+  pos: number; // this stitch's place in the cable, 0 = leftmost
+  dir: CableDir; // where the arrow points
+}
+
 export interface Cell {
   stitch: Stitch;
   color: string; // yarn color as #rrggbb; ignored for empty cells
+  cable?: CablePart;
 }
 
 // Knitting gauge: stitches and rows in 10 cm of fabric.
@@ -95,7 +108,10 @@ export type Mode = 'swatch' | 'garment';
 
 // 'swatch' drags out an area to fill with the active swatch; 'increase' and
 // 'decrease' shape the garment's edge. Those three only exist in garment mode.
-export type Tool = 'paint' | 'select' | 'swatch' | 'increase' | 'decrease';
+export type SwatchEdge = 'top' | 'bottom' | 'left' | 'right';
+
+// 'cable' drags along a row to cross its stitches.
+export type Tool = 'paint' | 'select' | 'cable' | 'swatch' | 'increase' | 'decrease';
 
 export const GARMENT_ONLY_TOOLS: Tool[] = ['swatch', 'increase', 'decrease'];
 
@@ -121,6 +137,8 @@ interface Snapshot {
   swatches: Swatch[];
   layout: GarmentLayout;
   palette: string[];
+  // The garment size goes with the layout: the edge buttons change both.
+  garment: Garment;
 }
 
 const HISTORY_LIMIT = 100;
@@ -151,6 +169,8 @@ interface PatternState extends PatternDoc {
   setName: (name: string) => void;
   setGauge: (gauge: Gauge) => void;
   setGarment: (garment: Garment) => void;
+  // Add (+1) or remove (-1) one row or stitch column at an edge of the garment.
+  resizeGarmentEdge: (edge: SwatchEdge, delta: 1 | -1) => void;
   setTool: (tool: Tool) => void;
   setSwatchFill: (fill: SwatchFill) => void;
   setView: (view: View) => void;
@@ -161,6 +181,8 @@ interface PatternState extends PatternDoc {
   deleteSwatch: (id: string) => void;
   renameSwatch: (name: string) => void;
   resizeSwatch: (rows: number, cols: number) => void;
+  // Add (+1) or remove (-1) one row or column at an edge of the active swatch.
+  resizeSwatchEdge: (edge: SwatchEdge, delta: 1 | -1) => void;
 
   // Picking a stitch or yarn also applies it to the current selection.
   setActiveStitch: (stitch: Stitch) => void;
@@ -176,6 +198,9 @@ interface PatternState extends PatternDoc {
   // Reset the showing grid to plain knit in the main yarn: the active swatch,
   // or the whole garment (swatch areas, stitch edits and shaping).
   clearAll: () => void;
+  // Turn the one-row selection into a cable pointing the way it was dragged.
+  // Clicking a single stitch of an existing cable removes that cable.
+  makeCable: () => void;
 
   undo: () => void;
   beginStroke: () => void;
@@ -256,6 +281,115 @@ function applyToGarment(state: PatternState, sel: Selection, change: Partial<Cel
   return { ...state.layout, overrides };
 }
 
+export function withoutCable({ cable: _cable, ...cell }: Cell): Cell {
+  return cell;
+}
+
+// A copy of a row with any cable that covers column `col` removed whole, so
+// dropping that column can't leave half a cable behind.
+function dropCableAt(row: Cell[], col: number): Cell[] {
+  const cable = row[col]?.cable;
+  if (!cable) return row;
+  const start = col - cable.pos;
+  return row.map((cell, c) => (c >= start && c < start + cable.span ? withoutCable(cell) : cell));
+}
+
+// Move everything painted on the garment by dRows rows up and dCols stitches
+// to the left (negative moves down/right), as when a row or column is added
+// or removed at the bottom or right edge. Swatch areas may end up partly
+// below/right of the edge — they keep their tiling and are clipped when
+// drawn — and are dropped once fully past it. Cables in stitch edits that
+// would be cut by the edge are removed whole.
+function shiftLayout(layout: GarmentLayout, dRows: number, dCols: number): GarmentLayout {
+  const regions = layout.regions
+    .map((r) => ({ ...r, rb0: r.rb0 + dRows, rb1: r.rb1 + dRows, cr0: r.cr0 + dCols, cr1: r.cr1 + dCols }))
+    .filter((r) => (r.span === 'height' || r.rb1 >= 0) && (r.span === 'width' || r.cr1 >= 0));
+
+  const overrides: Record<string, Cell> = {};
+  for (const [key, cell] of Object.entries(layout.overrides)) {
+    const [rb, cr] = key.split(',').map(Number);
+    const nrb = rb + dRows;
+    const ncr = cr + dCols;
+    if (nrb >= 0 && ncr >= 0) overrides[cellKey(nrb, ncr)] = cell;
+  }
+  // A cable's stitches run right to left as cr goes up; if any of them fell
+  // off the right edge, strip the markers from the ones that are left.
+  if (dCols < 0) {
+    for (const [key, cell] of Object.entries(overrides)) {
+      if (!cell.cable) continue;
+      const [, cr] = key.split(',').map(Number);
+      // pos 0 is the cable's leftmost stitch, i.e. its highest cr.
+      const rightmostCr = cr - (cell.cable.span - 1 - cell.cable.pos);
+      if (rightmostCr < 0) overrides[key] = withoutCable(cell);
+    }
+  }
+
+  const shaping: Record<number, ColumnShaping> = {};
+  for (const [key, col] of Object.entries(layout.shaping)) {
+    const ncr = Number(key) + dCols;
+    if (ncr < 0) continue;
+    shaping[ncr] = {
+      ...(col.bottom !== undefined && { bottom: Math.max(0, col.bottom + dRows) }),
+      ...(col.top !== undefined && { top: col.top + dRows }),
+    };
+  }
+
+  return { regions, overrides, shaping };
+}
+
+// Grow or shrink a grid by one row or column at one edge. New stitches are
+// plain knit in `color`; a grid never shrinks below one row or column.
+function resizeAtEdge(cells: Cell[][], edge: SwatchEdge, delta: 1 | -1, color: string): Cell[][] {
+  const blank = (): Cell => ({ stitch: 'knit', color });
+  const cols = cells[0].length;
+  if (edge === 'top' || edge === 'bottom') {
+    if (delta === 1) {
+      const row = Array.from({ length: cols }, blank);
+      return edge === 'top' ? [row, ...cells] : [...cells, row];
+    }
+    if (cells.length <= 1) return cells;
+    return edge === 'top' ? cells.slice(1) : cells.slice(0, -1);
+  }
+  if (delta === 1) return cells.map((row) => (edge === 'left' ? [blank(), ...row] : [...row, blank()]));
+  if (cols <= 1) return cells;
+  return cells.map((row) =>
+    edge === 'left' ? dropCableAt(row, 0).slice(1) : dropCableAt(row, cols - 1).slice(0, -1)
+  );
+}
+
+// Set or clear the cable markers on `span` stitches of one row, starting at
+// column cMin, in whichever grid is showing. Returns null if any of those
+// stitches has been shaped away.
+function setCableCells(
+  state: PatternState,
+  row: number,
+  cMin: number,
+  span: number,
+  cable: Omit<CablePart, 'pos'> | null
+): Partial<PatternState> | null {
+  const mark = (cell: Cell, i: number): Cell =>
+    cable ? { ...cell, cable: { ...cable, pos: i } } : withoutCable(cell);
+  if (state.mode === 'garment') {
+    const { rows, cols } = garmentDims(state);
+    const base: Cell = { stitch: 'knit', color: state.palette[0] };
+    const shown = buildGarmentGrid(state.layout, state.swatches, base, rows, cols)[row];
+    const overrides = { ...state.layout.overrides };
+    for (let i = 0; i < span; i++) {
+      const cell = shown?.[cMin + i];
+      if (!cell) return null;
+      overrides[cellKey(rows - 1 - row, cols - 1 - (cMin + i))] = mark(cell, i);
+    }
+    return { layout: { ...state.layout, overrides } };
+  }
+  return {
+    swatches: updateActiveSwatch(state, (s) => {
+      const cells = s.cells.map((r) => [...r]);
+      for (let i = 0; i < span; i++) cells[row][cMin + i] = mark(cells[row][cMin + i], i);
+      return { ...s, cells };
+    }),
+  };
+}
+
 // Apply a stitch/yarn change to the selection in whichever grid is showing.
 function changeSelection(state: PatternState, change: Partial<Cell>): Partial<PatternState> {
   if (!state.selection) return {};
@@ -273,7 +407,7 @@ function changeSelection(state: PatternState, change: Partial<Cell>): Partial<Pa
 // edits that share it collapse into the first entry.
 function record(state: PatternState, key: string | null = null): Partial<PatternState> {
   if (key && key === state.historyKey) return {};
-  const snapshot = { swatches: state.swatches, layout: state.layout, palette: state.palette };
+  const snapshot = { swatches: state.swatches, layout: state.layout, palette: state.palette, garment: state.garment };
   return { past: [...state.past, snapshot].slice(-HISTORY_LIMIT), historyKey: key };
 }
 
@@ -308,6 +442,27 @@ export const usePatternStore = create<PatternState>((set) => ({
   // Changing the garment's stitch count can leave a selection out of range.
   setGauge: (gauge) => set({ gauge, selection: null }),
   setGarment: (garment) => set({ garment, selection: null }),
+  resizeGarmentEdge: (edge, delta) =>
+    set((state) => {
+      const { rows, cols } = garmentDims(state);
+      const vertical = edge === 'top' || edge === 'bottom';
+      if (delta === -1 && (vertical ? rows : cols) <= 1) return {};
+      // Store the size in cm, rounded to 2 decimals — close enough that the
+      // gauge turns it back into exactly the new stitch/row count.
+      const cm = (n: number, perTen: number) => Math.round((n / perTen) * 1000) / 100;
+      const garment = vertical
+        ? { ...state.garment, length: cm(rows + delta, state.gauge.rows) }
+        : { ...state.garment, width: cm(cols + delta, state.gauge.stitches) };
+      // Top/left edges are the far end in knitting order, so nothing moves;
+      // bottom/right edges shift everything to stay on the same stitches.
+      const layout =
+        edge === 'bottom'
+          ? shiftLayout(state.layout, delta, 0)
+          : edge === 'right'
+            ? shiftLayout(state.layout, 0, delta)
+            : state.layout;
+      return { ...record(state), garment, layout, selection: null };
+    }),
   setTool: (tool) => set({ tool, selection: null }),
   setSwatchFill: (swatchFill) => set({ swatchFill, tool: 'swatch', selection: null }),
   setView: (view) => set({ view }),
@@ -352,6 +507,18 @@ export const usePatternStore = create<PatternState>((set) => ({
         return { ...s, rows, cols, cells };
       }),
     })),
+
+  resizeSwatchEdge: (edge, delta) =>
+    set((state) => {
+      const swatch = activeSwatch(state);
+      const cells = resizeAtEdge(swatch.cells, edge, delta, state.palette[0]);
+      if (cells === swatch.cells) return {};
+      return {
+        ...record(state),
+        selection: null,
+        swatches: updateActiveSwatch(state, (s) => ({ ...s, rows: cells.length, cols: cells[0].length, cells })),
+      };
+    }),
 
   setActiveStitch: (activeStitch) =>
     set((state) => ({ activeStitch, ...changeSelection(state, { stitch: activeStitch }) })),
@@ -416,10 +583,17 @@ export const usePatternStore = create<PatternState>((set) => ({
         return { layout: { ...state.layout, overrides: { ...state.layout.overrides, [key]: brush } } };
       }
       const current = activeSwatch(state).cells[row]?.[col];
-      if (!current || (current.stitch === brush.stitch && current.color === brush.color)) return {};
+      if (!current || (current.stitch === brush.stitch && current.color === brush.color && !current.cable)) return {};
       return {
         swatches: updateActiveSwatch(state, (s) => {
           const cells = s.cells.map((r) => [...r]);
+          // Painting over part of a cable undoes the whole cable.
+          if (current.cable) {
+            const start = col - current.cable.pos;
+            for (let c = start; c < start + current.cable.span; c++) {
+              if (cells[row][c]?.cable) cells[row][c] = withoutCable(cells[row][c]);
+            }
+          }
           cells[row][col] = brush;
           return { ...s, cells };
         }),
@@ -477,6 +651,32 @@ export const usePatternStore = create<PatternState>((set) => ({
         selection: null,
         swatches: updateActiveSwatch(state, (s) => ({ ...s, cells: makeGrid(s.rows, s.cols, state.palette[0]) })),
       };
+    }),
+
+  makeCable: () =>
+    set((state) => {
+      const sel = state.selection;
+      if (!sel) return {};
+      const { cMin, cMax } = selectionBounds(sel);
+      const row = sel.r0;
+      const span = cMax - cMin + 1;
+      if (span === 1) {
+        const { rows, cols } = garmentDims(state);
+        const cell =
+          state.mode === 'garment'
+            ? buildGarmentGrid(state.layout, state.swatches, { stitch: 'knit', color: state.palette[0] }, rows, cols)[
+                row
+              ]?.[cMin]
+            : activeSwatch(state).cells[row]?.[cMin];
+        const cable = cell?.cable;
+        if (!cable) return { selection: null };
+        const change = setCableCells(state, row, cMin - cable.pos, cable.span, null);
+        return change ? { ...record(state), ...change, selection: null } : { selection: null };
+      }
+      if (span % 2 !== 0) return { selection: null };
+      const dir: CableDir = sel.c1 >= sel.c0 ? 'right' : 'left';
+      const change = setCableCells(state, row, cMin, span, { span, dir });
+      return change ? { ...record(state), ...change, selection: null } : { selection: null };
     }),
 
   undo: () =>

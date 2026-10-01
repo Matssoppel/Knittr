@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Line, Rect, Shape } from 'react-konva';
 import Konva from 'konva';
 import type { Context } from 'konva/lib/Context';
-import { Cell, View, usePatternStore } from '../store/usePatternStore';
-import { Grid, buildGarmentGrid, garmentStitches, tileGrid } from '../utils/garment';
+import { Cell, SwatchEdge, View, usePatternStore } from '../store/usePatternStore';
+import { Grid, buildGarmentGrid, cableLeans, cellKey, findCables, garmentStitches, tileGrid } from '../utils/garment';
 import { STITCH_BOX, STITCH_PARTS, shade } from './stitchShapes';
 
 const CELL_SIZE = 28; // px per stitch in the swatch editor
@@ -30,6 +30,9 @@ const CHART_GRID = '#b8b8b8';
 const CHART_INK = '#1f2326';
 const SELECTION_STROKE = '#1f2326';
 const SELECTION_FILL = 'rgba(31, 35, 38, 0.12)';
+
+// Stitches crossing behind a cable are darkened by this much.
+const CABLE_BACK_SHADE = 0.25;
 
 // Path2D objects are reusable, so parse each SVG path once.
 const pathCache = new Map<string, Path2D>();
@@ -103,6 +106,8 @@ function drawFabric(
   ctx.fillStyle = EMPTY_FILL;
   eachCell((_, r, c) => ctx.fillRect(xAt(c), yAt(r), xAt(c + 1) - xAt(c), yAt(r + 1) - yAt(r)));
 
+  const cables = findCables(grid);
+
   if (view === 'chart') {
     // Each cell is a flat square in its yarn color, with the standard chart
     // symbols — blank for knit, a dot for purl — and an X for no stitch.
@@ -135,6 +140,28 @@ function drawFabric(
     });
     // Grid lines go on top so they stay visible over colored squares.
     if (showGrid) strokeGrid(CHART_GRID);
+    // A cable is an arrow across its stitches, pointing the way the front
+    // stitches travel.
+    for (const { row, start, span, dir } of cables) {
+      const cell = grid[row][start];
+      const y = yAt(row) + (yAt(row + 1) - yAt(row)) / 2;
+      const inset = cellSize * 0.18;
+      const tail = dir === 'right' ? xAt(start) + inset : xAt(start + span) - inset;
+      const head = dir === 'right' ? xAt(start + span) - inset : xAt(start) + inset;
+      const sign = dir === 'right' ? 1 : -1;
+      const tip = Math.min(cellSize * 0.32, pitch * 0.4);
+      ctx.strokeStyle = cell && !isLight(cell.color) ? '#ffffff' : CHART_INK;
+      ctx.lineWidth = Math.max(1.5, cellSize * 0.09);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(tail, y);
+      ctx.lineTo(head, y);
+      ctx.moveTo(head - sign * tip, y - tip);
+      ctx.lineTo(head, y);
+      ctx.lineTo(head - sign * tip, y + tip);
+      ctx.stroke();
+    }
     return;
   }
 
@@ -156,16 +183,57 @@ function drawFabric(
     }
     return g;
   };
-  for (const pass of ['dark', 'light'] as const) {
-    eachCell(({ stitch, color }, r, c) => {
-      if (stitch === 'empty') return;
-      ctx.save();
+  // A cable stitch leans from where its foot sits on the row below to where
+  // its top is, stretched along that line so it keeps its thickness. That's
+  // what makes the two halves of a cable visibly swap places.
+  const { leans, extents } = cableLeans(cables, rows);
+  const height = pitch / ROW_STEP;
+  const drawStitch = ({ stitch, color }: Cell, r: number, c: number, pass: 'dark' | 'light') => {
+    if (stitch === 'empty') return;
+    const lean = leans.get(cellKey(r, c));
+    const yarn = lean?.back ? shade(color, CABLE_BACK_SHADE) : color;
+    ctx.save();
+    if (lean) {
+      // Map the stitch box's centre line onto the line from top to foot, and
+      // its width onto the perpendicular.
+      const dx = (lean.foot - lean.top) * cellSize;
+      const len = Math.hypot(dx, height);
+      const a = ((height / len) * cellSize) / STITCH_BOX;
+      const b = ((-dx / len) * cellSize) / STITCH_BOX;
+      const mid = STITCH_BOX / 2;
+      ctx.transform(a, b, dx / STITCH_BOX, scaleY, (lean.top + 0.5) * cellSize - mid * a, r * pitch - mid * b);
+    } else {
       ctx.translate(c * cellSize, r * pitch);
       ctx.scale(scaleX, scaleY);
-      ctx.fillStyle = gradientFor(pass === 'dark' ? shade(color) : color);
-      for (const d of STITCH_PARTS[stitch][pass]) ctx.fill(path2d(d));
-      ctx.restore();
+    }
+    ctx.fillStyle = gradientFor(pass === 'dark' ? shade(yarn) : yarn);
+    for (const d of STITCH_PARTS[stitch][pass]) ctx.fill(path2d(d));
+    ctx.restore();
+  };
+
+  // Ordinary stitches and the stitches crossing behind the cables first...
+  for (const pass of ['dark', 'light'] as const) {
+    eachCell((cell, r, c) => {
+      if (!leans.get(cellKey(r, c))?.front) drawStitch(cell, r, c, pass);
     });
+  }
+  // ...then the stitches crossing in front, bottom cable first and each
+  // strand bottom row first. The row just above a cable is redrawn on top,
+  // since its stitches hang over the cable's.
+  const order = cables.map((cable, i) => ({ ...cable, ...extents[i] })).sort((a, b) => b.bottom - a.bottom);
+  for (const { start, span, top, bottom } of order) {
+    for (let r = bottom; r >= top; r--) {
+      for (const pass of ['dark', 'light'] as const) {
+        for (let c = start; c < start + span; c++) {
+          const cell = grid[r]?.[c];
+          if (cell && leans.get(cellKey(r, c))?.front) drawStitch(cell, r, c, pass);
+        }
+      }
+    }
+    for (let c = start - 1; c <= start + span; c++) {
+      const cell = grid[top - 1]?.[c];
+      if (cell && !leans.get(cellKey(top - 1, c))?.front) drawStitch(cell, top - 1, c, 'light');
+    }
   }
 }
 
@@ -221,6 +289,8 @@ function Fabric({ grid, cellSize, editable = false }: FabricProps) {
         isStart || !selection
           ? { r0: cell.r, c0: cell.c, r1: cell.r, c1: cell.c }
           : { ...selection, r1: cell.r, c1: cell.c };
+      // A cable lies along a single row.
+      if (tool === 'cable') next.r1 = next.r0;
       // Full-width/height swatch fills stretch the dragged band edge to edge.
       if (tool === 'swatch' && swatchFill === 'width') Object.assign(next, { c0: 0, c1: cols - 1 });
       if (tool === 'swatch' && swatchFill === 'height') Object.assign(next, { r0: 0, r1: rows - 1 });
@@ -237,8 +307,9 @@ function Fabric({ grid, cellSize, editable = false }: FabricProps) {
       dragging.current = false;
       const state = usePatternStore.getState();
       state.endStroke();
-      // The swatch tool fills its area as soon as the drag ends.
+      // The swatch and cable tools act as soon as the drag ends.
       if (state.tool === 'swatch') state.fillAreaWithSwatch();
+      if (state.tool === 'cable') state.makeCable();
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('touchmove', onMove);
@@ -266,7 +337,7 @@ function Fabric({ grid, cellSize, editable = false }: FabricProps) {
     height: (Math.abs(selection.r1 - selection.r0) + 1) * pitch,
   };
 
-  const areaTool = tool === 'select' || tool === 'swatch';
+  const areaTool = tool === 'select' || tool === 'swatch' || tool === 'cable';
 
   // While dragging a swatch fill, the outline thickens when the dragged size
   // holds a whole number of repeats. Full-width/height bands thicken all round
@@ -281,6 +352,10 @@ function Fabric({ grid, cellSize, editable = false }: FabricProps) {
     if (swatchFill === 'width') thickTopBottom = thickSides = rowsOk;
     else if (swatchFill === 'height') thickTopBottom = thickSides = colsOk;
     else [thickTopBottom, thickSides] = [rowsOk, colsOk];
+  }
+  // A cable drag thickens once it covers an even number of stitches.
+  if (tool === 'cable' && selection) {
+    thickTopBottom = thickSides = (Math.abs(selection.c1 - selection.c0) + 1) % 2 === 0;
   }
 
   return (
@@ -312,8 +387,56 @@ function Fabric({ grid, cellSize, editable = false }: FabricProps) {
   );
 }
 
+const EDGE_LABELS: Record<SwatchEdge, { thing: string; where: string }> = {
+  top: { thing: 'row', where: 'at the top' },
+  bottom: { thing: 'row', where: 'at the bottom' },
+  left: { thing: 'column', where: 'on the left' },
+  right: { thing: 'column', where: 'on the right' },
+};
+
+// − / + buttons on each edge of an editor, to remove or add one row or
+// column right there.
+function EdgeResizer({
+  onResize,
+  children,
+}: {
+  onResize: (edge: SwatchEdge, delta: 1 | -1) => void;
+  children: ReactNode;
+}) {
+  const controls = (edge: SwatchEdge) => {
+    const { thing, where } = EDGE_LABELS[edge];
+    return (
+      <div className={`edge-controls edge-${edge}`}>
+        <button
+          onClick={() => onResize(edge, -1)}
+          title={`Remove ${thing} ${where}`}
+          aria-label={`Remove ${thing} ${where}`}
+        >
+          −
+        </button>
+        <button
+          onClick={() => onResize(edge, 1)}
+          title={`Add ${thing} ${where}`}
+          aria-label={`Add ${thing} ${where}`}
+        >
+          +
+        </button>
+      </div>
+    );
+  };
+  return (
+    <div className="edge-resizer">
+      {controls('top')}
+      {controls('left')}
+      <div className="edge-content">{children}</div>
+      {controls('right')}
+      {controls('bottom')}
+    </div>
+  );
+}
+
 function SwatchMaker() {
-  const { swatches, activeSwatchId, view, gauge } = usePatternStore();
+  const { swatches, activeSwatchId, view, gauge, resizeSwatchEdge } = usePatternStore();
   const swatch = swatches.find((s) => s.id === activeSwatchId) ?? swatches[0];
 
   // A square test piece, like a knitter's gauge swatch.
@@ -326,24 +449,30 @@ function SwatchMaker() {
   const previewCell = Math.min(PREVIEW_MAX_CELL, PREVIEW_MAX_SIZE / outCols, PREVIEW_MAX_SIZE / (outRows * ratio));
 
   return (
-    <div className="canvas-row">
-      <div>
-        <h3>Edit {swatch.name}</h3>
-        <Fabric grid={swatch.cells} cellSize={CELL_SIZE} editable />
-      </div>
+    <div className="canvas-area">
+      <div className="canvas-scroll">
+        <div className="canvas-row">
+          <div>
+            <h3>Edit {swatch.name}</h3>
+            <EdgeResizer onResize={resizeSwatchEdge}>
+              <Fabric grid={swatch.cells} cellSize={CELL_SIZE} editable />
+            </EdgeResizer>
+          </div>
 
-      <div>
-        <h3>
-          Swatch preview — {SWATCH_PREVIEW_CM} × {SWATCH_PREVIEW_CM} cm
-        </h3>
-        <Fabric grid={previewGrid} cellSize={previewCell} />
+          <div>
+            <h3>
+              Swatch preview — {SWATCH_PREVIEW_CM} × {SWATCH_PREVIEW_CM} cm
+            </h3>
+            <Fabric grid={previewGrid} cellSize={previewCell} />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
 function GarmentView() {
-  const { swatches, layout, palette, garment, gauge } = usePatternStore();
+  const { swatches, layout, palette, garment, gauge, resizeGarmentEdge } = usePatternStore();
   const { rows, cols } = garmentStitches(garment, gauge);
   const grid = useMemo(
     () => buildGarmentGrid(layout, swatches, { stitch: 'knit', color: palette[0] }, rows, cols),
@@ -355,10 +484,10 @@ function GarmentView() {
   const cellSize = Math.max(GARMENT_MIN_CELL, Math.min(GARMENT_MAX_CELL, fitCell * zoom));
 
   return (
-    <div>
+    <div className="canvas-area">
       <div className="canvas-heading">
         <h3>
-          Garment — {garment.width} × {garment.length} cm
+          Garment — {garment.width} × {garment.length} cm ({cols} sts × {rows} rows)
         </h3>
         <div className="zoom">
           <button onClick={() => setZoom((z) => z / 1.25)} aria-label="Zoom out" title="Zoom out">
@@ -372,7 +501,11 @@ function GarmentView() {
           </button>
         </div>
       </div>
-      <Fabric grid={grid} cellSize={cellSize} editable />
+      <div className="canvas-scroll">
+        <EdgeResizer onResize={resizeGarmentEdge}>
+          <Fabric grid={grid} cellSize={cellSize} editable />
+        </EdgeResizer>
+      </div>
     </div>
   );
 }

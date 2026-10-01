@@ -11,6 +11,7 @@ import clearIcon from './assets/icons/clear.svg';
 import knitIcon from './assets/icons/knit.svg';
 import purlIcon from './assets/icons/purl.svg';
 import emptyIcon from './assets/icons/empty.svg';
+import cableIcon from './assets/icons/cable.svg';
 import swatchAreaIcon from './assets/icons/swatch-area.svg';
 import increaseIcon from './assets/icons/increase.svg';
 import decreaseIcon from './assets/icons/decrease.svg';
@@ -39,6 +40,7 @@ const MODES: { mode: Mode; label: string }[] = [
 const TOOLS: { tool: Tool; label: string; icon: string }[] = [
   { tool: 'paint', label: 'Paint', icon: paintIcon },
   { tool: 'select', label: 'Select', icon: selectIcon },
+  { tool: 'cable', label: 'Cable', icon: cableIcon },
   { tool: 'swatch', label: 'Fill area with swatch', icon: swatchAreaIcon },
   { tool: 'increase', label: 'Increase', icon: increaseIcon },
   { tool: 'decrease', label: 'Decrease', icon: decreaseIcon },
@@ -163,6 +165,8 @@ export default function App() {
         : swatchFill === 'height'
           ? `Drag columns to fill them up the garment with ${swatch.name}`
           : `Drag an area to fill it with ${swatch.name}`
+      : tool === 'cable'
+        ? 'Drag along a row over an even number of stitches; the cable points the way you drag. Click a cable to remove it'
       : tool === 'increase'
         ? 'Drag along the edge: rows below each stitch become blank'
         : tool === 'decrease'
@@ -461,7 +465,7 @@ export default function App() {
             title={mode === 'garment' ? 'Clear garment' : 'Clear swatch'}
             aria-label={mode === 'garment' ? 'Clear garment' : 'Clear swatch'}
           >
-            <Icon src={clearIcon} />
+            <Icon src={clearIcon} luminance />
           </button>
           {selection && tool === 'select' && (
             <>
