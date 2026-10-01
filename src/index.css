@@ -1,43 +1,259 @@
+@import url('https://fonts.googleapis.com/css2?family=Intel+One+Mono:wght@400;600;700&display=swap');
+
+/* Tokens mirror the Figma file's palette. */
 :root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
+  --ink: #1f2326;
+  --paper: #f2f2f2;
+  --page: #f4f2ef;
+  --sidebar: #e07a5f;
+  --radius: 6px;
+
+  font-family: 'Intel One Mono', ui-monospace, monospace;
+  color: var(--ink);
 }
 
 body {
   margin: 0;
-  background: #f4f2ef;
+  background: var(--page);
+}
+
+.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  flex: 0 0 220px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--sidebar);
+  position: relative;
+}
+
+/* Hand-drawn edge on the right, matching the inputs' wobbly outline. The
+   strip is wider than the 1px line so the wobble filter has room to move it
+   without clipping. */
+.sidebar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -8px;
+  width: 16px;
+  background: linear-gradient(
+    to right,
+    transparent 7.5px,
+    var(--ink) 7.5px,
+    var(--ink) 8.5px,
+    transparent 8.5px
+  );
+  filter: url(#wobble);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.sidebar-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.sidebar label,
+.sidebar-group {
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-note {
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+/* Hand-drawn outline: the border lives on a pseudo-element run through the
+   #wobble SVG filter (defined in App.tsx), so text stays crisp. */
+.field,
+.sidebar button,
+.toolbar button {
+  position: relative;
+  background: var(--paper);
+  border-radius: var(--radius);
+}
+
+.field::after,
+.sidebar button::after,
+.toolbar button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  filter: url(#wobble);
+  pointer-events: none;
+}
+
+.field {
+  display: flex;
+}
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  width: 100%; /* inputs default to ~20 chars wide, which would stretch the sidebar */
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  outline: none;
+}
+
+.field:focus-within {
+  background: #fff;
+}
+
+.sidebar button,
+.toolbar button {
+  padding: 6px 12px;
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.sidebar button:hover,
+.sidebar button.active,
+.toolbar button:hover,
+.toolbar button.active {
+  background: #fff;
+}
+
+.sidebar button.active,
+.toolbar button.active {
+  font-weight: 700;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.segmented button {
+  flex: 1;
+  padding: 6px 0;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sidebar .swatch {
+  position: relative;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* Wobbly outline, like the buttons. */
+.sidebar label.swatch::after,
+.sidebar .swatch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  filter: url(#wobble);
+  pointer-events: none;
+}
+
+.sidebar .swatch.active {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* The real color input sits invisibly over the swatch so its picker opens
+   right next to it. */
+.swatch input[type='color'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.stage-wrapper {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
 }
 
 .toolbar {
   display: flex;
-  gap: 0.5rem;
   align-items: center;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid #ddd;
-  background: white;
-  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
-.toolbar label {
-  font-size: 0.85rem;
+.sidebar .icon-button,
+.toolbar .icon-button {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: center;
+  padding: 4px;
 }
 
-.toolbar button {
-  padding: 0.4rem 0.75rem;
-  border: 1px solid #ccc;
-  background: #fff;
-  border-radius: 6px;
-  cursor: pointer;
+.icon {
+  display: block;
+  background-color: currentColor;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
 }
 
-.toolbar button:hover {
-  background: #f0f0f0;
+.toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--paper);
 }
 
-.stage-wrapper {
-  overflow: auto;
-  padding: 1rem;
+.view-toggle {
+  margin-left: auto;
+}
+
+.toolbar-hint {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.stage-wrapper h3 {
+  font-size: 18px;
+  font-weight: 700;
 }

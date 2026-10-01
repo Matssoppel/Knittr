@@ -1,4 +1,4 @@
-import { PatternFile } from '../store/usePatternStore';
+import { DEFAULT_YARN, PatternFile, Stitch } from '../store/usePatternStore';
 
 // We store the file as JSON under a .txt extension: structured enough to parse
 // reliably, plain enough to peek at in a text editor if something goes wrong.
@@ -32,6 +32,13 @@ export function readPatternFile(file: File): Promise<PatternFile> {
         ) {
           throw new Error('File does not look like a valid pattern.');
         }
+        // Files saved before yarn colors existed store each cell as a bare
+        // stitch name; upgrade those to gray-yarn cells.
+        parsed.cells = parsed.cells.map((row: unknown[]) =>
+          row.map((cell) =>
+            typeof cell === 'string' ? { stitch: cell as Stitch, color: DEFAULT_YARN } : cell
+          )
+        );
         resolve(parsed as PatternFile);
       } catch (err) {
         reject(err);
